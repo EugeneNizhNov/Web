@@ -1,5 +1,8 @@
 package Server;
 
+import Handler.Handler;
+import Request.Request;
+
 import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -9,15 +12,19 @@ import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class Server {
 
     private final ExecutorService executor;
-    final List<String> validPaths = List.of("/index.html", "/spring.svg", "/spring.png",
-            "/resources.html", "/styles.css", "/app.js", "/links.html", "/forms.html", "/classic.html", "/events.html", "/events.js");
+    private final Map<String, Map<String, Handler>> handlers = new ConcurrentHashMap<>();
 
     public Server(int pollSize) {
         executor = Executors.newFixedThreadPool(pollSize);
@@ -35,21 +42,35 @@ public class Server {
         }
     }
 
+    public void addHandler(String method, String path, Handler handler) {
+        if (handlers.get(method) == null) {
+            handlers.put(method, new ConcurrentHashMap<>());
+        }
+        handlers.get(method).put(path, handler);
+    }
+
     private void handleConnection(Socket socket) {
         try (
                 socket;
-                final var in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                final var in = socket.getInputStream();
                 final var out = new BufferedOutputStream(socket.getOutputStream());
         ) {
             // read only request line for simplicity
             // must be in form GET /path HTTP/1.1
-            final var requestLine = in.readLine();
-            final var parts = requestLine.split(" ");
-            if (parts.length != 3) {
-                // just close socket
+
+            var request = Request.fromInputStream(in);
+            var pathHandlerMap = handlers.get(request.getMethod());
+            if (pathHandlerMap == null) {
+                //todo 404
                 return;
             }
-            final var path = parts[1];
+            var handler = pathHandlerMap.get(request.getPath());
+            if (handler == null) {
+                //todo 404
+                return;
+            }
+            handler.handle(request, out);
+          /*  final var path = request.getPath();
             if (!validPaths.contains(path)) {
                 out.write((
                         "HTTP/1.1 404 Not Found\r\n" +
@@ -89,7 +110,7 @@ public class Server {
                             "\r\n"
             ).getBytes());
             Files.copy(filePath, out);
-            out.flush();
+            out.flush();*/
         } catch (Exception ex) {
             ex.printStackTrace();
         }
